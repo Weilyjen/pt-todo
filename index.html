@@ -55,16 +55,16 @@
         const weekDays = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
 
         window.onload = function() {
-            // 檢查網址參數
-            // 格式: #id=12345&q=2025-01-01|抽血;2025-02-02|回診
-            const hash = window.location.hash.substring(1); // 去掉 #
+            // 讀取網址參數 (格式: #id=123&q=DATE|ITEM;DATE|ITEM)
+            // 瀏覽器會自動處理中文編碼，我們直接用 URLSearchParams 解讀即可
+            const hash = window.location.hash.substring(1); 
             const params = new URLSearchParams(hash);
             
             if(params.has('id') && params.has('q')) {
                 renderData(params);
                 
-                // 判斷是否為病人掃描 (網址不含 source=qr 則顯示工具列)
-                if (!window.location.search.includes("source=qr")) {
+                // 如果網址沒有 &source=qr，代表是工作人員打開的，顯示工具列
+                if (!window.location.href.includes("source=qr")) {
                     document.getElementById('staffTools').classList.remove('hidden');
                 }
             } else {
@@ -75,18 +75,18 @@
         function renderData(params) {
             try {
                 const id = params.get('id');
-                const qStr = params.get('q'); // 格式: DATE|ITEM;DATE|ITEM...
+                const qStr = params.get('q'); // 格式: 2025-01-01|抽血;2025-02-02|回診
 
                 document.getElementById('p_id').innerText = id;
                 const listContainer = document.getElementById('eventList');
                 listContainer.innerHTML = '';
 
-                // 分割多筆資料 (用分號 ; 隔開)
+                // 分割多筆資料 (;)
                 const items = qStr.split(';');
 
                 items.forEach(itemStr => {
                     if(!itemStr) return;
-                    // 分割日期與項目 (用直線 | 隔開)
+                    // 分割日期與項目 (|)
                     const [dateStr, todoText] = itemStr.split('|');
                     
                     const dateObj = new Date(dateStr);
@@ -137,17 +137,15 @@
             if(qrArea.classList.contains('hidden')) {
                 qrArea.classList.remove('hidden');
                 document.getElementById('qrcode').innerHTML = "";
-                // 加上 ?source=qr
-                const baseUrl = window.location.href.split('?')[0].split('#')[0];
-                const hash = window.location.hash;
-                const finalUrl = baseUrl + "?source=qr" + hash;
-                new QRCode(document.getElementById('qrcode'), { text: finalUrl, width: 180, height: 180 });
+                // 在網址後加上 &source=qr
+                const currentUrl = window.location.href;
+                const qrUrl = currentUrl.includes("?") ? currentUrl + "&source=qr" : currentUrl + "?source=qr";
+                new QRCode(document.getElementById('qrcode'), { text: qrUrl, width: 180, height: 180 });
             } else { qrArea.classList.add('hidden'); }
         }
 
         function copyUrl() {
-            const url = window.location.href;
-            navigator.clipboard.writeText(url).then(() => { alert("連結已複製！"); });
+            navigator.clipboard.writeText(window.location.href).then(() => { alert("連結已複製！"); });
         }
     </script>
 </body>
