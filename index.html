@@ -1,121 +1,198 @@
-<script>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>預約排程小幫手 | 萬華衛康內科診所</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .gradient-header { background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); }
+        /* 強制隱藏工具類 */
+        .force-hidden { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
+
+    <div id="statusMsg" class="mt-20 text-gray-500 font-bold text-center">
+        資料讀取中...<br>
+        <span class="text-xs font-normal text-gray-400">若長時間無反應，請重新整理頁面</span>
+    </div>
+
+    <div id="mainCard" class="force-hidden w-full max-w-lg bg-white rounded-xl shadow-xl overflow-hidden mb-6">
+        <div class="gradient-header p-5 text-center text-white">
+            <h2 class="text-xl font-bold mb-1">萬華衛康內科診所</h2>
+            <p class="text-blue-100 text-sm">您的預約待辦通知</p>
+        </div>
+        
+        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+            <span class="text-gray-500 text-sm font-bold">姓名/病歷號</span>
+            <span id="p_id" class="text-xl font-mono font-bold text-gray-800">--</span>
+        </div>
+
+        <div id="eventList" class="p-6 space-y-4"></div>
+
+        <div class="bg-gray-50 p-4 text-center text-xs text-gray-400">
+            請點擊「加入 Google 行事曆」以免遺漏行程。
+        </div>
+    </div>
+
+    <div id="staffTools" class="force-hidden w-full max-w-lg bg-slate-800 rounded-xl p-4 text-white shadow-lg">
+        <h3 class="text-sm font-bold text-slate-300 mb-3 border-b border-slate-600 pb-2">👩‍⚕️ 醫護人員控制台</h3>
+        <div class="flex gap-3">
+            <button onclick="toggleQR()" class="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold text-sm transition">顯示 QR Code</button>
+            <button onclick="copyUrl()" class="flex-1 bg-gray-600 hover:bg-gray-500 py-2 rounded font-bold text-sm transition">複製連結</button>
+        </div>
+        <div id="qrArea" class="force-hidden mt-4 bg-white p-4 rounded-lg flex flex-col items-center">
+            <div id="qrcode"></div>
+            <p class="text-slate-800 text-xs mt-2 font-bold">請病人掃描此碼</p>
+        </div>
+    </div>
+
+    <script>
         const weekDays = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
 
         window.onload = function() {
-            // 讀取網址參數
-            const hash = window.location.hash.substring(1); 
-            const params = new URLSearchParams(hash);
-            
-            if(params.has('id') && params.has('q')) {
-                renderData(params);
-                
-                // 判斷顯示工具列
-                if (!window.location.href.includes("source=qr")) {
-                    document.getElementById('staffTools').classList.remove('hidden');
+            try {
+                // 取得網址 Hash 並處理中文編碼
+                const rawHash = window.location.hash.substring(1); 
+                if(!rawHash) {
+                    throw new Error("無資料，請從 Coda 連結進入。");
                 }
-            } else {
-                document.getElementById('loading').innerText = "無資料，請從 Coda 連結進入。";
+
+                const params = new URLSearchParams(rawHash);
+
+                // 判斷模式 A: 明碼模式 (id=...&q=...)
+                if(params.has('id') && params.has('q')) {
+                    const id = params.get('id');
+                    const qStr = params.get('q');
+                    renderCards(id, qStr);
+                }
+                // 判斷模式 B: Base64 模式 (舊版相容, v=...)
+                else if(rawHash.includes('v=')) {
+                    // 舊版解碼邏輯
+                    const b64Val = rawHash.split('v=')[1].split('&')[0];
+                    const jsonStr = decodeURIComponent(atob(b64Val));
+                    const data = JSON.parse(jsonStr);
+                    
+                    // 轉換舊版資料格式以符合新版渲染函數
+                    let qList = "";
+                    if(data.l) {
+                        qList = data.l.map(item => `${item.d}|${item.t}`).join(';');
+                    }
+                    renderCards(data.id, qList);
+                } 
+                else {
+                    throw new Error("無法識別的網址格式");
+                }
+
+                // 判斷是否顯示工具列 (網址無 source=qr 則顯示)
+                if (!window.location.href.includes("source=qr")) {
+                    document.getElementById('staffTools').classList.remove('force-hidden');
+                }
+
+            } catch(e) {
+                console.error(e);
+                document.getElementById('statusMsg').innerHTML = `<span class="text-red-500">讀取錯誤：${e.message}</span>`;
             }
         };
 
-        function renderData(params) {
-            try {
-                const id = params.get('id');
-                const qStr = params.get('q'); 
+        function renderCards(id, qStr) {
+            document.getElementById('p_id').innerText = id;
+            const listContainer = document.getElementById('eventList');
+            listContainer.innerHTML = '';
 
-                document.getElementById('p_id').innerText = id;
-                const listContainer = document.getElementById('eventList');
-                listContainer.innerHTML = '';
+            const items = qStr.split(';');
 
-                const items = qStr.split(';');
+            items.forEach(itemStr => {
+                if(!itemStr) return;
+                // 分割日期與項目
+                const parts = itemStr.split('|');
+                if(parts.length < 2) return;
+                
+                const dateStr = parts[0];
+                const todoText = parts[1]; // 這裡會自動處理中文
+                
+                const dateObj = new Date(dateStr);
+                
+                // 防呆：日期錯誤處理
+                if(isNaN(dateObj.getTime())) return;
 
-                items.forEach(itemStr => {
-                    if(!itemStr) return;
-                    const [dateStr, todoText] = itemStr.split('|');
-                    
-                    const dateObj = new Date(dateStr);
-                    const y = dateObj.getFullYear();
-                    const m = String(dateObj.getMonth()+1).padStart(2, '0');
-                    const d = String(dateObj.getDate()).padStart(2, '0');
-                    const wk = weekDays[dateObj.getDay()];
-                    const rocDate = `民國${y-1911}年${m}月${d}日`;
+                const y = dateObj.getFullYear();
+                const m = String(dateObj.getMonth()+1).padStart(2, '0');
+                const d = String(dateObj.getDate()).padStart(2, '0');
+                const wk = weekDays[dateObj.getDay()];
+                const rocDate = `民國${y-1911}年${m}月${d}日`;
 
-                    // ==========================================
-                    // ★★★ 新增：智慧判斷地點與重複規則 ★★★
-                    // ==========================================
-                    
-                    let gLoc = "萬華衛康內科診所"; // 預設地點
-                    let gRecur = "";              // 預設不重複
-                    let gTitle = "萬華衛康內科診所回診"; // 預設標題
+                // 智慧判斷地點與重複規則
+                let gLoc = "萬華衛康內科診所";
+                let gTitle = "萬華衛康內科診所回診";
+                let gRecur = "";
+                let badge = "";
 
-                    // 判斷邏輯：如果內容包含「聯慶」
-                    if (todoText.includes("聯慶")) {
-                        gLoc = "聯慶大藥局";
-                        gTitle = "聯慶大藥局領藥";
-                        // 設定重複規則：每30天(INTERVAL=30)一次，共3次(COUNT=3)
-                        gRecur = "&recur=RRULE:FREQ=DAILY;INTERVAL=30;COUNT=3";
-                    }
+                if (todoText.includes("聯慶")) {
+                    gLoc = "聯慶大藥局";
+                    gTitle = "聯慶大藥局領藥";
+                    gRecur = "&recur=RRULE:FREQ=DAILY;INTERVAL=30;COUNT=3";
+                    badge = `<span class="bg-orange-100 text-orange-800 text-xs font-bold px-2 py-1 rounded ml-2">藥局領藥</span>`;
+                }
 
-                    // Google Calendar 連結組合
-                    const gDate = `${y}${m}${d}`;
-                    const nextDay = new Date(dateObj); nextDay.setDate(dateObj.getDate()+1);
-                    const gNext = `${nextDay.getFullYear()}${String(nextDay.getMonth()+1).padStart(2,'0')}${String(nextDay.getDate()).padStart(2,'0')}`;
-                    
-                    // 將新的 gLoc, gTitle, gRecur 變數帶入網址
-                    const gUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(gTitle)}&details=${encodeURIComponent(todoText + " (" + rocDate + ")\n病歷號: " + id)}&location=${encodeURIComponent(gLoc)}&dates=${gDate}/${gNext}${gRecur}`;
+                const gDate = `${y}${m}${d}`;
+                const nextDay = new Date(dateObj); nextDay.setDate(dateObj.getDate()+1);
+                const gNext = `${nextDay.getFullYear()}${String(nextDay.getMonth()+1).padStart(2,'0')}${String(nextDay.getDate()).padStart(2,'0')}`;
+                
+                const gUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(gTitle)}&details=${encodeURIComponent(todoText + " (" + rocDate + ")\n病歷號/姓名: " + id)}&location=${encodeURIComponent(gLoc)}&dates=${gDate}/${gNext}${gRecur}`;
 
-                    // ==========================================
+                // 過期判斷
+                const today = new Date(); today.setHours(0,0,0,0);
+                const diff = Math.ceil((dateObj - today) / 86400000);
+                let statusHtml = '';
+                if(diff < 0) statusHtml = `<span class="text-red-500 text-xs font-bold">已過期 ${Math.abs(diff)} 天</span>`;
+                else if(diff <= 7) statusHtml = `<span class="text-green-600 text-xs font-bold">即將到來 (${diff}天)</span>`;
 
-                    // 過期判斷
-                    const today = new Date(); today.setHours(0,0,0,0);
-                    const diff = Math.ceil((dateObj - today) / 86400000);
-                    let statusHtml = '';
-                    if(diff < 0) statusHtml = `<span class="text-red-500 text-xs font-bold">已過期 ${Math.abs(diff)} 天</span>`;
-                    else if(diff <= 7) statusHtml = `<span class="text-green-600 text-xs font-bold">即將到來 (${diff}天)</span>`;
-
-                    // 顯示卡片 (如果是聯慶，可以額外標示)
-                    let badge = todoText.includes("聯慶") 
-                        ? `<span class="bg-orange-100 text-orange-800 text-xs font-bold px-2 py-1 rounded ml-2">慢箋領藥</span>` 
-                        : ``;
-
-                    listContainer.innerHTML += `
-                        <div class="border border-gray-200 rounded-lg p-4 bg-white hover:shadow transition">
-                            <div class="flex justify-between items-start mb-2">
-                                <div class="flex items-center">
-                                    <h3 class="font-bold text-lg text-blue-800">${todoText}</h3>
-                                    ${badge}
-                                </div>
-                                ${statusHtml}
+                listContainer.innerHTML += `
+                    <div class="border border-gray-200 rounded-lg p-4 bg-white hover:shadow transition">
+                        <div class="flex justify-between items-start mb-2">
+                            <div class="flex items-center flex-wrap gap-1">
+                                <h3 class="font-bold text-lg text-blue-800">${todoText}</h3>
+                                ${badge}
                             </div>
-                            <div class="flex items-center gap-2 mb-3 text-gray-700">
-                                <span class="text-2xl font-bold font-mono">${y}/${m}/${d}</span>
-                                <span class="text-sm text-gray-500">(${wk})</span>
-                            </div>
-                            <a href="${gUrl}" target="_blank" class="block w-full text-center border border-gray-300 text-gray-600 font-bold py-2 rounded hover:bg-blue-50 hover:text-blue-600 transition text-sm flex justify-center items-center gap-2">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                                加入行事曆
-                            </a>
+                            ${statusHtml}
                         </div>
-                    `;
-                });
+                        <div class="flex items-center gap-2 mb-3 text-gray-700">
+                            <span class="text-2xl font-bold font-mono">${y}/${m}/${d}</span>
+                            <span class="text-sm text-gray-500">(${wk})</span>
+                        </div>
+                        <a href="${gUrl}" target="_blank" class="block w-full text-center border border-gray-300 text-gray-600 font-bold py-2 rounded hover:bg-blue-50 hover:text-blue-600 transition text-sm flex justify-center items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                            加入行事曆
+                        </a>
+                    </div>
+                `;
+            });
 
-                document.getElementById('loading').classList.add('hidden');
-                document.getElementById('mainCard').classList.remove('hidden');
-            } catch(e) { console.error(e); }
+            // 隱藏 Loading，顯示卡片
+            document.getElementById('statusMsg').classList.add('force-hidden');
+            document.getElementById('mainCard').classList.remove('force-hidden');
         }
 
         function toggleQR() {
             const qrArea = document.getElementById('qrArea');
-            if(qrArea.classList.contains('hidden')) {
-                qrArea.classList.remove('hidden');
+            if(qrArea.classList.contains('force-hidden')) {
+                qrArea.classList.remove('force-hidden');
                 document.getElementById('qrcode').innerHTML = "";
                 const currentUrl = window.location.href;
                 const qrUrl = currentUrl.includes("?") ? currentUrl + "&source=qr" : currentUrl + "?source=qr";
                 new QRCode(document.getElementById('qrcode'), { text: qrUrl, width: 180, height: 180 });
-            } else { qrArea.classList.add('hidden'); }
+            } else { qrArea.classList.add('force-hidden'); }
         }
 
         function copyUrl() {
             navigator.clipboard.writeText(window.location.href).then(() => { alert("連結已複製！"); });
         }
     </script>
+</body>
+</html>
